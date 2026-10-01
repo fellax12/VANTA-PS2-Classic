@@ -1,1 +1,152 @@
+name: Build VANTA PS2 Classic 3668 R0.1
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NETHER_URL: "https://github.com/Trixarian/NetherSX2-classic/releases/download/2.1/NetherSX2-v2.1-3668.apk"
+  NETHER_SHA256: "5518c0f0ec7d820ff96b51cca37c2db30b8601fc4e1ccef84bd03659c8d1a643"
+  APKTOOL_URL: "https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar"
+  BUILD_TOOLS: "36.0.0"
+
+jobs:
+  build:
+    name: VANTA PS2 Classic 3668 ARM64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout VANTA repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "build-tools;${BUILD_TOOLS}"
+
+      - name: Verify VANTA patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f patch_vanta_ps2_classic.py
+          python3 -m py_compile patch_vanta_ps2_classic.py
+
+      - name: Download pinned NetherSX2 Classic 3668
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "$NETHER_URL" -o NetherSX2-3668.apk
+          echo "${NETHER_SHA256}  NetherSX2-3668.apk" | sha256sum -c -
+          ls -lh NetherSX2-3668.apk
+
+      - name: Download Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "$APKTOOL_URL" -o apktool.jar
+          java -jar apktool.jar --version
+
+      - name: Decode without touching bytecode
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf decoded
+          # -s / --no-src keeps classes*.dex opaque and untouched.
+          java -jar apktool.jar d -f -s -o decoded NetherSX2-3668.apk
+          test -f decoded/AndroidManifest.xml
+          test -d decoded/lib
+          test -f decoded/classes.dex || true
+
+      - name: Apply VANTA Classic presentation layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Snapshot native libs so the VANTA layer cannot silently alter the core.
+          find decoded/lib -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/libs.before.sha256
+          python3 patch_vanta_ps2_classic.py decoded
+          find decoded/lib -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/libs.after.sha256
+          diff -u /tmp/libs.before.sha256 /tmp/libs.after.sha256
+
+          grep -q 'VANTA PS2 Classic' decoded/AndroidManifest.xml
+          grep -q '0.1-classic-3668' decoded/assets/vanta_build.txt
+
+      - name: Rebuild APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar b --use-aapt2 -o VANTA-PS2-Classic-unsigned.apk decoded
+          test -s VANTA-PS2-Classic-unsigned.apk
+
+      - name: Align and sign
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}"
+          export PATH="$BT:$PATH"
+
+          # Public Android platform test key used by the NetherSX2 project ecosystem.
+          curl --fail --location --retry 5 --retry-delay 2 \
+            "https://raw.githubusercontent.com/jorfao/pkStore/master/platform.keystore" \
+            -o platform.keystore
+
+          ALIAS="$(keytool -list -keystore platform.keystore -storepass android 2>/dev/null \
+            | awk -F',' '/PrivateKeyEntry/{print $1; exit}' | xargs)"
+          if [ -z "$ALIAS" ]; then
+            # The public store conventionally uses this alias.
+            ALIAS="android"
+          fi
+          echo "Signing alias: $ALIAS"
+
+          zipalign -p -f 4 \
+            VANTA-PS2-Classic-unsigned.apk \
+            VANTA-PS2-Classic-aligned.apk
+
+          apksigner sign \
+            --ks platform.keystore \
+            --ks-key-alias "$ALIAS" \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out VANTA-PS2-Classic-3668-R0.1-arm64.apk \
+            VANTA-PS2-Classic-aligned.apk
+
+          apksigner verify --verbose VANTA-PS2-Classic-3668-R0.1-arm64.apk
+
+      - name: Validate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}/aapt"
+          "$AAPT" dump badging VANTA-PS2-Classic-3668-R0.1-arm64.apk | tee /tmp/badging.txt
+          grep -q "application-label:'VANTA PS2 Classic'" /tmp/badging.txt
+          sha256sum VANTA-PS2-Classic-3668-R0.1-arm64.apk \
+            > VANTA-PS2-Classic-3668-R0.1-arm64.apk.sha256
+
+      - name: Upload VANTA PS2 Classic APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: VANTA-PS2-Classic-3668-R0.1-arm64
+          path: |
+            VANTA-PS2-Classic-3668-R0.1-arm64.apk
+            VANTA-PS2-Classic-3668-R0.1-arm64.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+          
