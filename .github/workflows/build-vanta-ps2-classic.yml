@@ -93,7 +93,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          java -jar apktool.jar b --use-aapt2 -o VANTA-PS2-Classic-unsigned.apk decoded
+          java -jar apktool.jar b -o VANTA-PS2-Classic-unsigned.apk decoded
           test -s VANTA-PS2-Classic-unsigned.apk
 
       - name: Align and sign
