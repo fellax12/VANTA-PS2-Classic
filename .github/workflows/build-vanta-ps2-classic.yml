@@ -1,6 +1,11 @@
-name: Build VANTA PS2 Classic 3668 R0.1
+name: Build VANTA PS2 Classic 3668 R0.2 Performance
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - "patch_vanta_ps2_classic.py"
+      - ".github/workflows/build-vanta-ps2-classic.yml"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: VANTA PS2 Classic 3668 ARM64
+    name: VANTA PS2 Classic 3668 R0.2 Performance
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -41,12 +46,14 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "build-tools;${BUILD_TOOLS}"
 
-      - name: Verify VANTA patch
+      - name: Verify VANTA R0.2 patch
         shell: bash
         run: |
           set -euo pipefail
           test -f patch_vanta_ps2_classic.py
           python3 -m py_compile patch_vanta_ps2_classic.py
+          grep -q '0.2-performance-3668' patch_vanta_ps2_classic.py
+          grep -q 'VANTA_R02_PERFORMANCE_PRESET' patch_vanta_ps2_classic.py
 
       - name: Download pinned NetherSX2 Classic 3668
         shell: bash
@@ -65,29 +72,32 @@ jobs:
             "$APKTOOL_URL" -o apktool.jar
           java -jar apktool.jar --version
 
-      - name: Decode without touching bytecode
+      - name: Decode APK with smali
         shell: bash
         run: |
           set -euo pipefail
           rm -rf decoded
-          # -s / --no-src keeps classes*.dex opaque and untouched.
-          java -jar apktool.jar d -f -s -o decoded NetherSX2-3668.apk
+          java -jar apktool.jar d -f -o decoded NetherSX2-3668.apk
           test -f decoded/AndroidManifest.xml
           test -d decoded/lib
-          test -f decoded/classes.dex || true
+          find decoded -path '*/xyz/aethersx2/android/MainActivity.smali' -print -quit | grep -q .
 
-      - name: Apply VANTA Classic presentation layer
+      - name: Apply VANTA Performance Engine R0.2
         shell: bash
         run: |
           set -euo pipefail
-          # Snapshot native libs so the VANTA layer cannot silently alter the core.
           find decoded/lib -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/libs.before.sha256
           python3 patch_vanta_ps2_classic.py decoded
           find decoded/lib -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/libs.after.sha256
           diff -u /tmp/libs.before.sha256 /tmp/libs.after.sha256
 
-          grep -q 'VANTA PS2 Classic' decoded/AndroidManifest.xml
-          grep -q '0.1-classic-3668' decoded/assets/vanta_build.txt
+          MAIN="$(find decoded -path '*/xyz/aethersx2/android/MainActivity.smali' -print -quit)"
+          grep -q 'VANTA_R02_PERFORMANCE_PRESET' "$MAIN"
+          grep -q 'EmuCore/GS/upscale_multiplier' "$MAIN"
+          grep -q 'EmuCore/GS/HWDownloadMode' "$MAIN"
+          grep -q 'EmuCore/Speedhacks/vuThread' "$MAIN"
+          grep -q '0.2-performance-3668' decoded/assets/vanta_build.txt
+          grep -q 'VANTA 0.2 Performance' decoded/AndroidManifest.xml
 
       - name: Rebuild APK
         shell: bash
@@ -103,7 +113,6 @@ jobs:
           BT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}"
           export PATH="$BT:$PATH"
 
-          # Public Android platform test key used by the NetherSX2 project ecosystem.
           curl --fail --location --retry 5 --retry-delay 2 \
             "https://raw.githubusercontent.com/jorfao/pkStore/master/platform.keystore" \
             -o platform.keystore
@@ -111,10 +120,8 @@ jobs:
           ALIAS="$(keytool -list -keystore platform.keystore -storepass android 2>/dev/null \
             | awk -F',' '/PrivateKeyEntry/{print $1; exit}' | xargs)"
           if [ -z "$ALIAS" ]; then
-            # The public store conventionally uses this alias.
             ALIAS="android"
           fi
-          echo "Signing alias: $ALIAS"
 
           zipalign -p -f 4 \
             VANTA-PS2-Classic-unsigned.apk \
@@ -125,28 +132,32 @@ jobs:
             --ks-key-alias "$ALIAS" \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out VANTA-PS2-Classic-3668-R0.1-arm64.apk \
+            --out VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk \
             VANTA-PS2-Classic-aligned.apk
 
-          apksigner verify --verbose VANTA-PS2-Classic-3668-R0.1-arm64.apk
+          apksigner verify --verbose VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk
 
-      - name: Validate identity
+      - name: Validate final APK
         shell: bash
         run: |
           set -euo pipefail
           AAPT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}/aapt"
-          "$AAPT" dump badging VANTA-PS2-Classic-3668-R0.1-arm64.apk | tee /tmp/badging.txt
+          "$AAPT" dump badging VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk | tee /tmp/badging.txt
           grep -q "application-label:'VANTA PS2 Classic'" /tmp/badging.txt
-          sha256sum VANTA-PS2-Classic-3668-R0.1-arm64.apk \
-            > VANTA-PS2-Classic-3668-R0.1-arm64.apk.sha256
 
-      - name: Upload VANTA PS2 Classic APK
+          unzip -p VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk assets/vanta_build.txt | tee /tmp/vanta_build.txt
+          grep -q '0.2-performance-3668' /tmp/vanta_build.txt
+
+          sha256sum VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk \
+            > VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk.sha256
+
+      - name: Upload VANTA R0.2 Performance APK
         uses: actions/upload-artifact@v7
         with:
-          name: VANTA-PS2-Classic-3668-R0.1-arm64
+          name: VANTA-PS2-Classic-3668-R0.2-Performance-arm64
           path: |
-            VANTA-PS2-Classic-3668-R0.1-arm64.apk
-            VANTA-PS2-Classic-3668-R0.1-arm64.apk.sha256
+            VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk
+            VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
           
