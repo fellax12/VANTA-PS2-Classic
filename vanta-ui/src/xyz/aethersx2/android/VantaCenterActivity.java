@@ -142,7 +142,7 @@ public class VantaCenterActivity extends Activity {
         titles.setOrientation(LinearLayout.VERTICAL);
         TextView title = text("VANTA PS2", 22, text, Typeface.BOLD);
         title.setLetterSpacing(0.08f);
-        TextView sub = text("PERFORMANCE CENTER • R0.4", 11, accent, Typeface.BOLD);
+        TextView sub = text("Performance Center • R0.4", 11, accent, Typeface.BOLD);
         sub.setLetterSpacing(0.12f);
         titles.addView(title);
         titles.addView(sub);
