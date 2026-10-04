@@ -5,9 +5,8 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "vanta-native/**"
+      - "patch_vanta_native_r05.py"
       - ".github/workflows/build-vanta-native-r05.yml"
-
 permissions:
   contents: read
 
