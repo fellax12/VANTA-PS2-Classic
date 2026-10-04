@@ -1,13 +1,12 @@
-name: Build VANTA PS2 Classic 3668 R0.3 G96 Balanced
+name: Build VANTA PS2 R0.4 Performance Lab
 
 on:
   push:
     branches: [ main ]
     paths:
-      - "patch_vanta_ps2_classic.py"
-      - ".github/workflows/build-vanta-ps2-classic.yml"
-      - "TESTE-RAPIDO.md"
-      - "CHANGELOG.md"
+      - "patch_vanta_ps2_r04.py"
+      - "vanta-ui/**"
+      - ".github/workflows/build-vanta-ps2-r04.yml"
   workflow_dispatch:
 
 permissions:
@@ -18,10 +17,11 @@ env:
   NETHER_SHA256: "5518c0f0ec7d820ff96b51cca37c2db30b8601fc4e1ccef84bd03659c8d1a643"
   APKTOOL_URL: "https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar"
   BUILD_TOOLS: "36.0.0"
+  ANDROID_PLATFORM: "35"
 
 jobs:
   build:
-    name: VANTA PS2 Classic 3668 R0.3 G96 Balanced
+    name: VANTA PS2 3668 R0.4 Performance Lab
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -39,95 +39,123 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "build-tools;${BUILD_TOOLS}"
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-${ANDROID_PLATFORM}" \
+            "build-tools;${BUILD_TOOLS}"
 
-      - name: Verify VANTA R0.3 patch
+      - name: Validate VANTA sources
         shell: bash
         run: |
           set -euo pipefail
-          test -f patch_vanta_ps2_classic.py
-          python3 -m py_compile patch_vanta_ps2_classic.py
-          grep -q '0.3-g96-balanced-3668' patch_vanta_ps2_classic.py
-          grep -q 'VANTA_R03_G96_BALANCED' patch_vanta_ps2_classic.py
-          python3 - <<'PY'
-          import importlib.util
-          spec = importlib.util.spec_from_file_location("vanta_patch", "patch_vanta_ps2_classic.py")
-          mod = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(mod)
-          p = mod.PRESET_METHOD
-          assert 'const-string v2, "EmuCore/GS/upscale_multiplier"' in p
-          assert 'const-string v3, "1"' in p
-          assert 'const-string v3, "0.750000"' not in p
-          assert 'const-string v2, "EmuCore/Speedhacks/vuThread"\n    const/4 v3, 0x0' in p
-          assert 'VANTA/R03G96BalancedApplied' in p
-          print("[ok] static R0.3 invariants")
-          PY
+          python3 -m py_compile patch_vanta_ps2_r04.py
+          test -f vanta-ui/src/xyz/aethersx2/android/VantaCenterActivity.java
+          grep -q 'VANTA_R04_DEFAULTS' patch_vanta_ps2_r04.py
+          grep -q 'VANTA_R04_SETTINGS_CENTER' patch_vanta_ps2_r04.py
+          grep -q 'Performance Center' vanta-ui/src/xyz/aethersx2/android/VantaCenterActivity.java
+          grep -q 'EmuCore/AffinityControlMode' vanta-ui/src/xyz/aethersx2/android/VantaCenterActivity.java
+          grep -q 'EmuCore/GS/HWDownloadMode' vanta-ui/src/xyz/aethersx2/android/VantaCenterActivity.java
+
+      - name: Compile VANTA Performance Center
+        shell: bash
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}"
+          ANDROID_JAR="$ANDROID_SDK_ROOT/platforms/android-${ANDROID_PLATFORM}/android.jar"
+          test -f "$ANDROID_JAR"
+          test -x "$BT/d8"
+
+          rm -rf vanta_classes vanta_dex vanta-center.jar
+          mkdir -p vanta_classes vanta_dex
+          javac -encoding UTF-8 -source 8 -target 8 \
+            -cp "$ANDROID_JAR" \
+            -d vanta_classes \
+            vanta-ui/src/xyz/aethersx2/android/VantaCenterActivity.java
+
+          jar cf vanta-center.jar -C vanta_classes .
+          "$BT/d8" \
+            --lib "$ANDROID_JAR" \
+            --min-api 26 \
+            --output vanta_dex \
+            vanta-center.jar
+
+          test -s vanta_dex/classes.dex
+          strings vanta_dex/classes.dex | grep -q 'VantaCenterActivity'
+          strings vanta_dex/classes.dex | grep -q 'VANTA PS2'
 
       - name: Download pinned NetherSX2 Classic 3668
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 5 --retry-delay 2 \
-            "$NETHER_URL" -o NetherSX2-3668.apk
+          curl --fail --location --retry 5 --retry-delay 2 "$NETHER_URL" -o NetherSX2-3668.apk
           echo "${NETHER_SHA256}  NetherSX2-3668.apk" | sha256sum -c -
-          ls -lh NetherSX2-3668.apk
 
       - name: Download Apktool
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 5 --retry-delay 2 \
-            "$APKTOOL_URL" -o apktool.jar
+          curl --fail --location --retry 5 --retry-delay 2 "$APKTOOL_URL" -o apktool.jar
           java -jar apktool.jar --version
 
-      - name: Decode APK with smali
+      - name: Decode base APK
         shell: bash
         run: |
           set -euo pipefail
           rm -rf decoded
           java -jar apktool.jar d -f -o decoded NetherSX2-3668.apk
           test -f decoded/AndroidManifest.xml
-          test -d decoded/lib
           find decoded -path '*/xyz/aethersx2/android/MainActivity.smali' -print -quit | grep -q .
+          find decoded -path '*/xyz/aethersx2/android/SettingsActivity.smali' -print -quit | grep -q .
 
-      - name: Apply VANTA Performance Engine R0.3 G96 Balanced
+      - name: Apply VANTA R0.4 UX and Performance Lab
         shell: bash
         run: |
           set -euo pipefail
           find decoded/lib -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/libs.before.sha256
-          python3 patch_vanta_ps2_classic.py decoded
+          python3 patch_vanta_ps2_r04.py decoded
           find decoded/lib -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/libs.after.sha256
           diff -u /tmp/libs.before.sha256 /tmp/libs.after.sha256
 
           MAIN="$(find decoded -path '*/xyz/aethersx2/android/MainActivity.smali' -print -quit)"
-          grep -q 'VANTA_R03_G96_BALANCED' "$MAIN"
-          grep -q 'EmuCore/GS/upscale_multiplier' "$MAIN"
-          grep -q 'EmuCore/GS/HWDownloadMode' "$MAIN"
+          SETTINGS="$(find decoded -path '*/xyz/aethersx2/android/SettingsActivity.smali' -print -quit)"
+          grep -q 'VANTA_R04_DEFAULTS' "$MAIN"
+          grep -q 'EmuCore/GS/ThreadedPresentation' "$MAIN"
           grep -q 'EmuCore/Speedhacks/vuThread' "$MAIN"
-          grep -q 'VANTA/R03G96BalancedApplied' "$MAIN"
-          grep -q '0.3-g96-balanced-3668' decoded/assets/vanta_build.txt
-          grep -q 'VANTA 0.3 G96 Balanced' decoded/AndroidManifest.xml
+          grep -q 'VANTA_R04_SETTINGS_CENTER' "$SETTINGS"
+          grep -q 'VantaCenterActivity' "$SETTINGS"
+          grep -q 'VANTA Obsidian' decoded/res/values/arrays.xml
+          grep -q 'VANTA Ivory' decoded/res/values/arrays.xml
+          grep -q 'GLOBAL • TODOS OS JOGOS' decoded/res/xml/system_preferences.xml
+          grep -q 'JOGO • SOMENTE ESTE TÍTULO' decoded/res/xml/system_game_settings_preferences.xml
+          grep -q '0.4-performance-lab-3668' decoded/assets/vanta_build.txt
 
-      - name: Rebuild APK
+      - name: Rebuild patched APK
         shell: bash
         run: |
           set -euo pipefail
-          java -jar apktool.jar b -o VANTA-PS2-Classic-unsigned.apk decoded
-          test -s VANTA-PS2-Classic-unsigned.apk
+          java -jar apktool.jar b -o VANTA-PS2-R0.4-unsigned.apk decoded
+          test -s VANTA-PS2-R0.4-unsigned.apk
 
-      - name: Align and sign
+      - name: Add VANTA custom Activity dex
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp vanta_dex/classes.dex classes2.dex
+          zip -q -j VANTA-PS2-R0.4-unsigned.apk classes2.dex
+          unzip -l VANTA-PS2-R0.4-unsigned.apk | grep -q 'classes2.dex'
+          unzip -p VANTA-PS2-R0.4-unsigned.apk classes2.dex | strings | grep -q 'VantaCenterActivity'
+
+      - name: Align and sign with VANTA project key
         shell: bash
         run: |
           set -euo pipefail
           BT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}"
-          export PATH="$BT:$PATH"
 
           curl --fail --location --retry 5 --retry-delay 2 \
             "https://raw.githubusercontent.com/jorfao/pkStore/master/platform.keystore" \
@@ -135,47 +163,45 @@ jobs:
 
           ALIAS="$(keytool -list -keystore platform.keystore -storepass android 2>/dev/null \
             | awk -F',' '/PrivateKeyEntry/{print $1; exit}' | xargs)"
-          if [ -z "$ALIAS" ]; then
-            ALIAS="android"
-          fi
+          if [ -z "$ALIAS" ]; then ALIAS="android"; fi
 
-          zipalign -p -f 4 \
-            VANTA-PS2-Classic-unsigned.apk \
-            VANTA-PS2-Classic-aligned.apk
+          "$BT/zipalign" -p -f 4 \
+            VANTA-PS2-R0.4-unsigned.apk \
+            VANTA-PS2-R0.4-aligned.apk
 
-          apksigner sign \
+          "$BT/apksigner" sign \
             --ks platform.keystore \
             --ks-key-alias "$ALIAS" \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk \
-            VANTA-PS2-Classic-aligned.apk
+            --out VANTA-PS2-Classic-3668-R0.4-Performance-Lab-arm64.apk \
+            VANTA-PS2-R0.4-aligned.apk
 
-          apksigner verify --verbose VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk
+          "$BT/apksigner" verify --verbose VANTA-PS2-Classic-3668-R0.4-Performance-Lab-arm64.apk
 
       - name: Validate final APK
         shell: bash
         run: |
           set -euo pipefail
-          AAPT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}/aapt"
-          "$AAPT" dump badging VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk | tee /tmp/badging.txt
-          grep -q "application-label:'VANTA PS2 Classic'" /tmp/badging.txt
+          BT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}"
+          APK="VANTA-PS2-Classic-3668-R0.4-Performance-Lab-arm64.apk"
 
-          unzip -p VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk assets/vanta_build.txt | tee /tmp/vanta_build.txt
-          grep -q '0.3-g96-balanced-3668' /tmp/vanta_build.txt
-          grep -q 'MTVU OFF' /tmp/vanta_build.txt
-          grep -q '1x Native' /tmp/vanta_build.txt
+          "$BT/aapt" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "application-label:'VANTA PS2'" /tmp/badging.txt
+          unzip -l "$APK" | grep -q 'classes2.dex'
+          unzip -p "$APK" assets/vanta_build.txt | tee /tmp/vanta_build.txt
+          grep -q '0.4-performance-lab-3668' /tmp/vanta_build.txt
+          unzip -p "$APK" classes2.dex | strings | grep -q 'Performance Center'
 
-          sha256sum VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk \
-            > VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk.sha256
+          sha256sum "$APK" > "$APK.sha256"
 
-      - name: Upload VANTA R0.3 G96 Balanced APK
+      - name: Upload VANTA R0.4 APK
         uses: actions/upload-artifact@v7
         with:
-          name: VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64
+          name: VANTA-PS2-Classic-3668-R0.4-Performance-Lab-arm64
           path: |
-            VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk
-            VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk.sha256
+            VANTA-PS2-Classic-3668-R0.4-Performance-Lab-arm64.apk
+            VANTA-PS2-Classic-3668-R0.4-Performance-Lab-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
           
