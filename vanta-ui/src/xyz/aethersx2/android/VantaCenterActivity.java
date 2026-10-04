@@ -142,7 +142,7 @@ public class VantaCenterActivity extends Activity {
         titles.setOrientation(LinearLayout.VERTICAL);
         TextView title = text("VANTA PS2", 22, text, Typeface.BOLD);
         title.setLetterSpacing(0.08f);
-        TextView sub = text("Performance Center • R0.4", 11, accent, Typeface.BOLD);
+        TextView sub = text("PERFORMANCE CENTER • R0.4", 11, accent, Typeface.BOLD);
         sub.setLetterSpacing(0.12f);
         titles.addView(title);
         titles.addView(sub);
@@ -373,4 +373,112 @@ public class VantaCenterActivity extends Activity {
         sp.topMargin = dp(8);
         block.addView(spinner, sp);
         parent.addView(block);
-  
+    }
+
+    private void addSwitch(LinearLayout parent, String title, String summary, final String key, boolean def) {
+        LinearLayout block = settingBlock(title, summary);
+        final Switch sw = new Switch(this);
+        sw.setText(prefs.getBoolean(key, def) ? "ATIVO" : "DESLIGADO");
+        sw.setTextColor(muted);
+        sw.setChecked(prefs.getBoolean(key, def));
+        sw.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            prefs.edit().putBoolean(key, isChecked).apply();
+            sw.setText(isChecked ? "ATIVO" : "DESLIGADO");
+            updateStatus();
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.END;
+        lp.topMargin = dp(6);
+        block.addView(sw, lp);
+        parent.addView(block);
+    }
+
+    private LinearLayout settingBlock(String title, String summary) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable gd = round(surface2, dp(14), outline, 1);
+        block.setBackground(gd);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(10);
+        block.setLayoutParams(lp);
+        block.addView(text(title, 15, text, Typeface.BOLD));
+        TextView s = text(summary, 12, muted, Typeface.NORMAL);
+        s.setPadding(0, dp(4), 0, 0);
+        block.addView(s);
+        return block;
+    }
+
+    private LinearLayout card(String title, String subtitle) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(16), dp(15), dp(16), dp(16));
+        c.setBackground(round(surface, dp(18), outline, 1));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(12);
+        c.setLayoutParams(lp);
+        TextView t = text(title, 13, accent, Typeface.BOLD);
+        t.setLetterSpacing(0.10f);
+        c.addView(t);
+        TextView st = text(subtitle, 13, muted, Typeface.NORMAL);
+        st.setPadding(0, dp(5), 0, 0);
+        c.addView(st);
+        return c;
+    }
+
+    private Button actionButton(String title, String summary, View.OnClickListener click, boolean primary) {
+        Button b = new Button(this);
+        b.setAllCaps(false);
+        b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        b.setText(title + "\n" + summary);
+        b.setTextSize(13);
+        b.setTextColor(primary ? (dark ? Color.BLACK : Color.WHITE) : text);
+        b.setPadding(dp(14), dp(10), dp(14), dp(10));
+        b.setBackground(round(primary ? accent : surface2, dp(14), primary ? accent : outline, 1));
+        b.setOnClickListener(click);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(10);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private TextView paragraph(String value) {
+        TextView t = text(value, 13, muted, Typeface.NORMAL);
+        t.setPadding(0, dp(10), 0, 0);
+        return t;
+    }
+
+    private TextView badge(String value) {
+        TextView t = text(value, 10, dark ? Color.BLACK : Color.WHITE, Typeface.BOLD);
+        t.setLetterSpacing(0.08f);
+        t.setPadding(dp(10), dp(6), dp(10), dp(6));
+        t.setBackground(round(accent, dp(99), accent, 0));
+        return t;
+    }
+
+    private TextView text(String value, float size, int color, int typeface) {
+        TextView t = new TextView(this);
+        t.setText(value);
+        t.setTextSize(size);
+        t.setTextColor(color);
+        t.setTypeface(Typeface.create("sans-serif", typeface));
+        t.setLineSpacing(0f, 1.06f);
+        return t;
+    }
+
+    private GradientDrawable round(int fill, int radius, int strokeColor, int strokeDp) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(fill);
+        d.setCornerRadius(radius);
+        if (strokeDp > 0) d.setStroke(dp(strokeDp), strokeColor);
+        return d;
+    }
+
+    private int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private void toast(String s) {
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+    }
+}
