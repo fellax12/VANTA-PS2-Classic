@@ -1,4 +1,4 @@
-name: Build VANTA PS2 Classic 3668 R0.2 Performance
+name: Build VANTA PS2 Classic 3668 R0.3 G96 Balanced
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
     paths:
       - "patch_vanta_ps2_classic.py"
       - ".github/workflows/build-vanta-ps2-classic.yml"
+      - "TESTE-RAPIDO.md"
+      - "CHANGELOG.md"
   workflow_dispatch:
 
 permissions:
@@ -19,7 +21,7 @@ env:
 
 jobs:
   build:
-    name: VANTA PS2 Classic 3668 R0.2 Performance
+    name: VANTA PS2 Classic 3668 R0.3 G96 Balanced
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -46,14 +48,27 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "build-tools;${BUILD_TOOLS}"
 
-      - name: Verify VANTA R0.2 patch
+      - name: Verify VANTA R0.3 patch
         shell: bash
         run: |
           set -euo pipefail
           test -f patch_vanta_ps2_classic.py
           python3 -m py_compile patch_vanta_ps2_classic.py
-          grep -q '0.2-performance-3668' patch_vanta_ps2_classic.py
-          grep -q 'VANTA_R02_PERFORMANCE_PRESET' patch_vanta_ps2_classic.py
+          grep -q '0.3-g96-balanced-3668' patch_vanta_ps2_classic.py
+          grep -q 'VANTA_R03_G96_BALANCED' patch_vanta_ps2_classic.py
+          python3 - <<'PY'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("vanta_patch", "patch_vanta_ps2_classic.py")
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          p = mod.PRESET_METHOD
+          assert 'const-string v2, "EmuCore/GS/upscale_multiplier"' in p
+          assert 'const-string v3, "1"' in p
+          assert 'const-string v3, "0.750000"' not in p
+          assert 'const-string v2, "EmuCore/Speedhacks/vuThread"\n    const/4 v3, 0x0' in p
+          assert 'VANTA/R03G96BalancedApplied' in p
+          print("[ok] static R0.3 invariants")
+          PY
 
       - name: Download pinned NetherSX2 Classic 3668
         shell: bash
@@ -82,7 +97,7 @@ jobs:
           test -d decoded/lib
           find decoded -path '*/xyz/aethersx2/android/MainActivity.smali' -print -quit | grep -q .
 
-      - name: Apply VANTA Performance Engine R0.2
+      - name: Apply VANTA Performance Engine R0.3 G96 Balanced
         shell: bash
         run: |
           set -euo pipefail
@@ -92,12 +107,13 @@ jobs:
           diff -u /tmp/libs.before.sha256 /tmp/libs.after.sha256
 
           MAIN="$(find decoded -path '*/xyz/aethersx2/android/MainActivity.smali' -print -quit)"
-          grep -q 'VANTA_R02_PERFORMANCE_PRESET' "$MAIN"
+          grep -q 'VANTA_R03_G96_BALANCED' "$MAIN"
           grep -q 'EmuCore/GS/upscale_multiplier' "$MAIN"
           grep -q 'EmuCore/GS/HWDownloadMode' "$MAIN"
           grep -q 'EmuCore/Speedhacks/vuThread' "$MAIN"
-          grep -q '0.2-performance-3668' decoded/assets/vanta_build.txt
-          grep -q 'VANTA 0.2 Performance' decoded/AndroidManifest.xml
+          grep -q 'VANTA/R03G96BalancedApplied' "$MAIN"
+          grep -q '0.3-g96-balanced-3668' decoded/assets/vanta_build.txt
+          grep -q 'VANTA 0.3 G96 Balanced' decoded/AndroidManifest.xml
 
       - name: Rebuild APK
         shell: bash
@@ -132,32 +148,34 @@ jobs:
             --ks-key-alias "$ALIAS" \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk \
+            --out VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk \
             VANTA-PS2-Classic-aligned.apk
 
-          apksigner verify --verbose VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk
+          apksigner verify --verbose VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk
 
       - name: Validate final APK
         shell: bash
         run: |
           set -euo pipefail
           AAPT="$ANDROID_SDK_ROOT/build-tools/${BUILD_TOOLS}/aapt"
-          "$AAPT" dump badging VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk | tee /tmp/badging.txt
+          "$AAPT" dump badging VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk | tee /tmp/badging.txt
           grep -q "application-label:'VANTA PS2 Classic'" /tmp/badging.txt
 
-          unzip -p VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk assets/vanta_build.txt | tee /tmp/vanta_build.txt
-          grep -q '0.2-performance-3668' /tmp/vanta_build.txt
+          unzip -p VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk assets/vanta_build.txt | tee /tmp/vanta_build.txt
+          grep -q '0.3-g96-balanced-3668' /tmp/vanta_build.txt
+          grep -q 'MTVU OFF' /tmp/vanta_build.txt
+          grep -q '1x Native' /tmp/vanta_build.txt
 
-          sha256sum VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk \
-            > VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk.sha256
+          sha256sum VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk \
+            > VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk.sha256
 
-      - name: Upload VANTA R0.2 Performance APK
+      - name: Upload VANTA R0.3 G96 Balanced APK
         uses: actions/upload-artifact@v7
         with:
-          name: VANTA-PS2-Classic-3668-R0.2-Performance-arm64
+          name: VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64
           path: |
-            VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk
-            VANTA-PS2-Classic-3668-R0.2-Performance-arm64.apk.sha256
+            VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk
+            VANTA-PS2-Classic-3668-R0.3-G96-Balanced-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
           
