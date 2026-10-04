@@ -1,0 +1,140 @@
+name: Build VANTA PS2 Native R0.5 Night Game
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "vanta-native/**"
+      - ".github/workflows/build-vanta-native-r05.yml"
+
+permissions:
+  contents: read
+
+env:
+  ARMSX2_REPO: "https://github.com/ARMSX2/ARMSX2.git"
+  ARMSX2_PIN: "d383b3636947565d9201f81e32178d0288623d8d"
+  NDK_VERSION: "28.2.13676358"
+  CMAKE_VERSION: "3.31.6"
+
+jobs:
+  build:
+    name: VANTA Native G96 arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout VANTA control repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install pinned NDK and CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}" "platform-tools"
+
+      - name: Fetch pinned open ARM64 core
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ARMSX2-src
+          git init ARMSX2-src
+          git -C ARMSX2-src remote add origin "$ARMSX2_REPO"
+          git -C ARMSX2-src fetch --depth 1 origin "$ARMSX2_PIN"
+          git -C ARMSX2-src checkout --detach FETCH_HEAD
+          git -C ARMSX2-src submodule update --init --recursive --depth 1
+          test "$(git -C ARMSX2-src rev-parse HEAD)" = "$ARMSX2_PIN"
+
+      - name: Validate and apply VANTA Native patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile vanta-native/patch_vanta_native_r05.py
+          python3 vanta-native/patch_vanta_native_r05.py ARMSX2-src
+          grep -q 'VANTA PS2 Native R0.5 Night Game' ARMSX2-src/VANTA_NATIVE_BUILD.txt
+          grep -q 'VANTA • OTIMIZAÇÃO RÁPIDA' ARMSX2-src/platforms/android/app/src/main/java/com/armsx2/ui/settings/PerformanceTab.kt
+          grep -q 'hardwareDownloadMode = 5' ARMSX2-src/platforms/android/app/src/main/java/com/armsx2/ui/settings/PerformanceTab.kt
+          grep -q 'forceMaliFbFetch = true' ARMSX2-src/platforms/android/app/src/main/java/com/armsx2/ui/settings/PerformanceTab.kt
+          grep -q 'VANTA_SCOPE_BANNER_R05' ARMSX2-src/platforms/android/app/src/main/java/com/armsx2/ui/settingshub/SettingsScreen.kt
+          grep -q 'VANTA Obsidian' ARMSX2-src/platforms/android/app/src/main/java/com/armsx2/ui/settings/AppTab.kt
+
+      - name: Fetch shader compiler dependencies
+        shell: bash
+        working-directory: ARMSX2-src/platforms/android
+        run: |
+          set -euo pipefail
+          python3 app/src/main/cpp/3rdparty/shaderc/utils/git-sync-deps
+
+      - name: Add Rust Android target
+        shell: bash
+        run: rustup target add aarch64-linux-android
+
+      - name: Build VANTA Native with LTO and G96 tuning
+        shell: bash
+        working-directory: ARMSX2-src/platforms/android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :app:assembleGithubRelease --stacktrace --no-daemon \
+            -Parmsx2.applicationId=com.vanta.ps2.native \
+            '-Parmsx2.appLabel=VANTA PS2 Native' \
+            -Parmsx2.channel=nightly \
+            -Parmsx2.versionCode=5005 \
+            '-Parmsx2.versionName=VANTA Native R0.5 Night Game' \
+            -Parmsx2.ndkVersion=${NDK_VERSION} \
+            -Parmsx2.march=armv8.2-a+fp16+dotprod \
+            '-Parmsx2.marchExtra=-mtune=cortex-a76 -moutline-atomics' \
+            -Parmsx2.pgo=none
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          APK="$(find ARMSX2-src/platforms/android/app/build/outputs/apk -type f -name '*.apk' | grep -E '/github/.*release|github.*release' | head -n 1 || true)"
+          if [ -z "$APK" ]; then
+            APK="$(find ARMSX2-src/platforms/android/app/build/outputs/apk -type f -name '*.apk' | head -n 1 || true)"
+          fi
+          test -n "$APK"
+          cp "$APK" out/VANTA-PS2-Native-R0.5-Night-Game-G96-arm64.apk
+          sha256sum out/VANTA-PS2-Native-R0.5-Night-Game-G96-arm64.apk > out/VANTA-PS2-Native-R0.5-Night-Game-G96-arm64.apk.sha256
+          ls -lh out/
+
+      - name: Validate APK package and native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="out/VANTA-PS2-Native-R0.5-Night-Game-G96-arm64.apk"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -o -name aapt2 | sort -V | tail -n 1)"
+          test -s "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/'
+          if command -v aapt >/dev/null 2>&1; then
+            aapt dump badging "$APK" | tee /tmp/vanta-badging.txt
+          elif [ -x "$AAPT" ]; then
+            "$AAPT" dump badging "$APK" | tee /tmp/vanta-badging.txt || true
+          fi
+          if [ -s /tmp/vanta-badging.txt ]; then
+            grep -q "package: name='com.vanta.ps2.native'" /tmp/vanta-badging.txt
+          fi
+
+      - name: Upload VANTA Native APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: VANTA-PS2-Native-R0.5-Night-Game-G96-arm64
+          path: |
+            out/VANTA-PS2-Native-R0.5-Night-Game-G96-arm64.apk
+            out/VANTA-PS2-Native-R0.5-Night-Game-G96-arm64.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
